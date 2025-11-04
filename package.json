@@ -1,0 +1,26 @@
+{
+  "name": "jira-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for JIRA integration",
+  "type": "module",
+  "bin": {
+    "jira-mcp-server": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "mcp",
+    "jira",
+    "model-context-protocol"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "jira.js": "^5.2.2"
+  }
+}

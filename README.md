@@ -1,0 +1,234 @@
+# JIRA MCP Server
+
+A Model Context Protocol (MCP) server that provides JIRA integration capabilities. This server allows AI assistants to search, view, create, and update JIRA issues using natural language.
+
+## Features
+
+- **Search Issues**: Search for JIRA issues using JQL (JIRA Query Language)
+- **Get Issue Details**: Retrieve detailed information about specific issues
+- **Create Issues**: Create new JIRA issues with customizable fields
+- **Update Issues**: Update existing issues including status transitions
+
+## Installation
+
+```bash
+npm install
+```
+
+## Configuration
+
+The server requires three environment variables:
+
+- `JIRA_URL`: Your JIRA instance URL (e.g., `https://your-domain.atlassian.net`)
+- `JIRA_EMAIL`: Your JIRA account email
+- `JIRA_API_TOKEN`: Your JIRA API token
+
+### Getting a JIRA API Token
+
+1. Log in to https://id.atlassian.com/manage-profile/security/api-tokens
+2. Click "Create API token"
+3. Give it a label and copy the token
+
+### Setup for Claude Desktop
+
+Add this to your Claude Desktop configuration file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "npx",
+      "args": ["-y", "jira-mcp-server"],
+      "env": {
+        "JIRA_URL": "https://your-domain.atlassian.net",
+        "JIRA_EMAIL": "your-email@example.com",
+        "JIRA_API_TOKEN": "your-api-token-here"
+      }
+    }
+  }
+}
+```
+
+Alternatively, if running locally:
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "node",
+      "args": ["O:\\projects\\jira-mcp\\index.js"],
+      "env": {
+        "JIRA_URL": "https://your-domain.atlassian.net",
+        "JIRA_EMAIL": "your-email@example.com",
+        "JIRA_API_TOKEN": "your-api-token-here"
+      }
+    }
+  }
+}
+```
+
+## Available Resources
+
+The MCP server exposes JIRA data as resources that can be listed and read:
+
+### jira://search?jql={query}
+
+Search for JIRA issues using JQL queries.
+
+**Example URIs:**
+
+- `jira://search?jql=project=ST AND status=Open`
+- `jira://search?jql=project=ST AND type=Task AND component in (BuildReq, ValidationReq) AND status=Open ORDER BY priority DESC`
+- `jira://search?jql=assignee=currentUser() AND status!=Done`
+
+### jira://issue/{issueKey}
+
+Get detailed information about a specific issue.
+
+**Example URIs:**
+
+- `jira://issue/ST-123`
+- `jira://issue/PROJ-456`
+
+## Available Tools
+
+### jira_search
+
+Search for JIRA issues using JQL.
+
+**Parameters:**
+
+- `jql` (required): JQL query string
+- `maxResults` (optional): Maximum results to return (default: 50)
+- `startAt` (optional): Starting index for pagination (default: 0)
+- `fields` (optional): Array of field names to return
+
+**Example:**
+
+```
+Search for all open bugs in the PROJ project
+```
+
+### jira_get_issue
+
+Get detailed information about a specific issue.
+
+**Parameters:**
+
+- `issueKey` (required): Issue key (e.g., "PROJ-123")
+- `fields` (optional): Array of field names to return
+
+**Example:**
+
+```
+Get details for issue PROJ-123
+```
+
+### jira_create_issue
+
+Create a new JIRA issue.
+
+**Parameters:**
+
+- `projectKey` (required): Project key
+- `summary` (required): Issue title
+- `issueType` (required): Issue type (e.g., "Task", "Bug", "Story")
+- `description` (optional): Issue description
+- `priority` (optional): Priority level
+- `assignee` (optional): Assignee account ID
+- `labels` (optional): Array of labels
+
+**Example:**
+
+```
+Create a new bug in project PROJ with summary "Login page not working"
+```
+
+### jira_update_issue
+
+Update an existing JIRA issue.
+
+**Parameters:**
+
+- `issueKey` (required): Issue key to update
+- `summary` (optional): New summary
+- `description` (optional): New description
+- `priority` (optional): New priority
+- `assignee` (optional): New assignee account ID
+- `labels` (optional): New labels array
+- `status` (optional): New status (triggers transition)
+
+**Example:**
+
+```
+Update issue PROJ-123 to set status to "In Progress"
+```
+
+## Usage Examples
+
+After configuring the server in Claude Desktop, you can use natural language commands like:
+
+- "Search for all issues in the PROJ project that are in progress"
+- "Show me details for issue PROJ-123"
+- "Create a new task in PROJ with title 'Update documentation'"
+- "Update PROJ-456 and set its status to Done"
+
+## Running as an SSE Server
+
+The server now runs as an HTTP server using Server-Sent Events (SSE) transport. This allows it to be used by any MCP client that supports SSE connections.
+
+### Start the Server
+
+```bash
+# Set environment variables
+export JIRA_URL="https://your-domain.atlassian.net"
+export JIRA_EMAIL="your-email@example.com"
+export JIRA_API_TOKEN="your-api-token-here"
+
+# Start the server
+npm start
+```
+
+Or with a custom port:
+
+```bash
+PORT=8080 npm start
+```
+
+### SSE Endpoints
+
+Once running, the server exposes:
+
+- **SSE Connection**: `GET http://localhost:3000/sse` - Main SSE endpoint for MCP communication
+- **Message Endpoint**: `POST http://localhost:3000/message` - Endpoint for sending messages to the server
+- **Health Check**: `GET http://localhost:3000/health` - Server health status
+
+### Connecting MCP Clients
+
+To connect an MCP client to the SSE server, use the SSE endpoint URL:
+
+```
+http://localhost:3000/sse
+```
+
+### Testing the Server
+
+You can test if the server is running:
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Response: {"status":"ok","server":"jira-mcp-server"}
+```
+
+## Development
+
+The server follows the Model Context Protocol specification and supports SSE transport for HTTP-based communication.
+
+## License
+
+MIT
