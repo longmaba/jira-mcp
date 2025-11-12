@@ -2,6 +2,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -12,6 +13,33 @@ import { Version3Client } from "jira.js";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+
+// Store original stdout.write for later use
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+let transportStarted = false;
+
+// Check early if we're likely to use stdio (stdin is piped)
+// If so, set up stdout interception immediately to catch any early writes
+const isStdinLikelyPiped = !process.stdin.isTTY;
+if (isStdinLikelyPiped) {
+  // Intercept stdout immediately to prevent any early non-JSON-RPC output
+  process.stdout.write = function(chunk, encoding, callback) {
+    if (!transportStarted) {
+      // Check if it looks like JSON-RPC
+      const str = chunk?.toString() || '';
+      if (str.trim().startsWith('{') && str.includes('"jsonrpc"')) {
+        // Allow JSON-RPC messages
+        return originalStdoutWrite(chunk, encoding, callback);
+      }
+      // Discard non-JSON-RPC output
+      if (typeof callback === 'function') {
+        callback();
+      }
+      return true;
+    }
+    return originalStdoutWrite(chunk, encoding, callback);
+  };
+}
 
 dotenv.config();
 
@@ -37,20 +65,22 @@ const client = new Version3Client({
   },
 });
 
-const server = new Server(
-  {
-    name: "jira-mcp-server",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
+// Function to create a new server instance
+function createServer() {
+  const server = new Server(
+    {
+      name: "jira-mcp-server",
+      version: "1.0.0",
     },
-  }
-);
+    {
+      capabilities: {
+        resources: {},
+        tools: {},
+      },
+    }
+  );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
@@ -181,9 +211,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
     ],
   };
-});
+  });
 
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return {
     resources: [
       {
@@ -200,9 +230,9 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
       },
     ],
   };
-});
+  });
 
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const uri = request.params.uri;
 
   try {
@@ -307,9 +337,9 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       ],
     };
   }
-});
+  });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
@@ -534,71 +564,157 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+  });
+
+  return server;
+}
 
 async function main() {
-  const app = express();
-  const PORT = process.env.PORT || 3000;
+  // Determine transport mode:
+  // Priority order:
+  // 1. If MCP_TRANSPORT is explicitly set, use that
+  // 2. If stdin is not a TTY (piped from MCP client), use stdio (this takes precedence over PORT)
+  // 3. Otherwise, use SSE if PORT is set or stdin is a TTY (for manual testing)
+  const transportMode = process.env.MCP_TRANSPORT;
+  
+  // Check if stdin is NOT a TTY (piped) - this handles both false and undefined
+  const isStdinPiped = !process.stdin.isTTY;
+  
+  let useStdio = false;
+  let useSSE = false;
+  
+  if (transportMode === "stdio") {
+    useStdio = true;
+  } else if (transportMode === "sse") {
+    useSSE = true;
+  } else if (isStdinPiped) {
+    // stdin is piped (not a TTY) - ALWAYS use stdio for MCP clients
+    // This takes precedence over everything else except explicit transport mode
+    useStdio = true;
+  } else if (process.env.PORT && process.stdin.isTTY === true) {
+    // Only use SSE if PORT is explicitly set AND stdin is a TTY
+    useSSE = true;
+  } else {
+    // Default to stdio if we can't determine (safer for MCP clients)
+    useStdio = true;
+  }
 
-  // Enable CORS for all origins (adjust as needed for production)
-  app.use(
-    cors({
-      origin: "*",
-      methods: ["GET", "POST", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization"],
-    })
-  );
-
-  app.use(express.json());
-
-  // Store active transports by session ID
-  const transports = new Map();
-
-  // Health check endpoint
-  app.get("/health", (req, res) => {
-    res.json({ status: "ok", server: "jira-mcp-server" });
-  });
-
-  // SSE endpoint for MCP
-  app.get("/sse", async (req, res) => {
-    console.error("New SSE connection established");
-
-    // Create transport - it will generate its own sessionId
-    const transport = new SSEServerTransport("/message", res);
-
-    // Store transport by its generated sessionId
-    transports.set(transport.sessionId, transport);
-    console.error("Created transport with sessionId:", transport.sessionId);
-
-    await server.connect(transport);
-
-    // Handle client disconnect
-    req.on("close", () => {
-      console.error("SSE connection closed for session:", transport.sessionId);
-      transports.delete(transport.sessionId);
+  if (useStdio) {
+    // Stdio mode - for MCP clients like Claude Desktop
+    // IMPORTANT: All logging must go to stderr, not stdout, in stdio mode
+    
+    // Handle EPIPE errors gracefully (broken pipe when client disconnects)
+    process.stdout.on('error', (err) => {
+      if (err.code === 'EPIPE') {
+        // Client disconnected, this is normal - exit gracefully
+        process.exit(0);
+      } else {
+        console.error('stdout error:', err);
+      }
     });
-  });
-
-  // Message endpoint for client requests
-  app.post("/message", async (req, res) => {
-    const sessionId = req.query.sessionId;
-    console.error("Received message for session:", sessionId);
-
-    const transport = transports.get(sessionId);
-    if (!transport) {
-      console.error("No transport found for session:", sessionId);
-      return res.status(404).json({ error: "Session not found" });
+    
+    // If we didn't intercept stdout earlier (when stdin wasn't piped),
+    // do it now (handles MCP_TRANSPORT=stdio explicit setting)
+    // Note: if isStdinLikelyPiped was true, we already intercepted above
+    if (!isStdinLikelyPiped) {
+      // Check if stdout.write was already intercepted
+      const currentWrite = process.stdout.write;
+      if (currentWrite === originalStdoutWrite || currentWrite.toString().includes('transportStarted')) {
+        // Not yet intercepted, or it's our interceptor - set it up
+        process.stdout.write = function(chunk, encoding, callback) {
+          if (!transportStarted) {
+            const str = chunk?.toString() || '';
+            if (str.trim().startsWith('{') && str.includes('"jsonrpc"')) {
+              return originalStdoutWrite(chunk, encoding, callback);
+            }
+            if (typeof callback === 'function') {
+              callback();
+            }
+            return true;
+          }
+          return originalStdoutWrite(chunk, encoding, callback);
+        };
+      }
     }
+    
+    console.error("Starting JIRA MCP Server in stdio mode...");
+    const server = createServer();
+    const transport = new StdioServerTransport();
+    // Enable stdout writes now so transport can write JSON-RPC messages
+    transportStarted = true;
+    await server.connect(transport);
+    console.error("JIRA MCP Server connected via stdio");
+  } else {
+    // SSE mode - for HTTP-based clients
+    const app = express();
+    const PORT = process.env.PORT || 3000;
 
-    // Let the transport handle the message
-    // Note: We pass the raw request body (already parsed by express.json())
-    await transport.handlePostMessage(req, res, req.body);
-  });
+    // Enable CORS for all origins (adjust as needed for production)
+    app.use(
+      cors({
+        origin: "*",
+        methods: ["GET", "POST", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+      })
+    );
 
-  app.listen(PORT, () => {
-    console.error(`JIRA MCP Server running on http://localhost:${PORT}`);
-    console.error(`SSE endpoint: http://localhost:${PORT}/sse`);
-  });
+    app.use(express.json());
+
+    // Store active transports and servers by session ID
+    const transports = new Map();
+    const servers = new Map();
+
+    // Health check endpoint
+    app.get("/health", (req, res) => {
+      res.json({ status: "ok", server: "jira-mcp-server" });
+    });
+
+    // SSE endpoint for MCP
+    app.get("/sse", async (req, res) => {
+      console.error("New SSE connection established");
+
+      // Create a new server instance for this connection
+      const server = createServer();
+      
+      // Create transport - it will generate its own sessionId
+      const transport = new SSEServerTransport("/message", res);
+
+      // Store transport and server by sessionId
+      transports.set(transport.sessionId, transport);
+      servers.set(transport.sessionId, server);
+      console.error("Created transport with sessionId:", transport.sessionId);
+
+      await server.connect(transport);
+
+      // Handle client disconnect
+      req.on("close", () => {
+        console.error("SSE connection closed for session:", transport.sessionId);
+        transports.delete(transport.sessionId);
+        servers.delete(transport.sessionId);
+      });
+    });
+
+    // Message endpoint for client requests
+    app.post("/message", async (req, res) => {
+      const sessionId = req.query.sessionId;
+      console.error("Received message for session:", sessionId);
+
+      const transport = transports.get(sessionId);
+      if (!transport) {
+        console.error("No transport found for session:", sessionId);
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      // Let the transport handle the message
+      // Note: We pass the raw request body (already parsed by express.json())
+      await transport.handlePostMessage(req, res, req.body);
+    });
+
+    app.listen(PORT, () => {
+      console.error(`JIRA MCP Server running on http://localhost:${PORT}`);
+      console.error(`SSE endpoint: http://localhost:${PORT}/sse`);
+    });
+  }
 }
 
 main().catch((error) => {

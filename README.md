@@ -31,6 +31,8 @@ The server requires three environment variables:
 
 ### Setup for Claude Desktop
 
+The server supports both **stdio** and **SSE** transport modes. For Claude Desktop and other MCP clients that spawn processes, stdio mode is used automatically.
+
 Add this to your Claude Desktop configuration file:
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
@@ -69,6 +71,8 @@ Alternatively, if running locally:
   }
 }
 ```
+
+The server will automatically detect that it's being run by an MCP client (stdin is not a TTY) and use stdio transport mode.
 
 ## Available Resources
 
@@ -176,11 +180,26 @@ After configuring the server in Claude Desktop, you can use natural language com
 - "Create a new task in PROJ with title 'Update documentation'"
 - "Update PROJ-456 and set its status to Done"
 
-## Running as an SSE Server
+## Transport Modes
 
-The server now runs as an HTTP server using Server-Sent Events (SSE) transport. This allows it to be used by any MCP client that supports SSE connections.
+The server supports two transport modes:
 
-### Start the Server
+### Stdio Mode (Default for MCP Clients)
+
+When the server is spawned by an MCP client (like Claude Desktop), it automatically detects that stdin is not a TTY and uses stdio transport. This is the standard mode for local MCP integrations.
+
+You can also explicitly force stdio mode by setting:
+```bash
+MCP_TRANSPORT=stdio node index.js
+```
+
+### SSE Mode (HTTP Server)
+
+The server can also run as an HTTP server using Server-Sent Events (SSE) transport. This allows it to be used by any MCP client that supports SSE connections over HTTP.
+
+### Start the Server in SSE Mode
+
+To start the server in SSE mode (HTTP server), set the `PORT` environment variable:
 
 ```bash
 # Set environment variables
@@ -188,15 +207,20 @@ export JIRA_URL="https://your-domain.atlassian.net"
 export JIRA_EMAIL="your-email@example.com"
 export JIRA_API_TOKEN="your-api-token-here"
 
-# Start the server
-npm start
+# Start the server in SSE mode
+PORT=3000 npm start
 ```
 
-Or with a custom port:
+Or explicitly set the transport mode:
 
 ```bash
-PORT=8080 npm start
+MCP_TRANSPORT=sse PORT=3000 npm start
 ```
+
+The server will automatically use SSE mode if:
+- `PORT` environment variable is set
+- `MCP_TRANSPORT=sse` is set
+- stdin is a TTY (running interactively)
 
 ### SSE Endpoints
 
@@ -227,7 +251,12 @@ curl http://localhost:3000/health
 
 ## Development
 
-The server follows the Model Context Protocol specification and supports SSE transport for HTTP-based communication.
+The server follows the Model Context Protocol specification and supports both stdio and SSE transports:
+
+- **Stdio transport**: For local MCP clients that spawn processes (e.g., Claude Desktop)
+- **SSE transport**: For HTTP-based MCP clients and web applications
+
+The transport mode is automatically detected based on the execution context, but can be explicitly controlled via the `MCP_TRANSPORT` environment variable (`stdio` or `sse`).
 
 ## License
 
