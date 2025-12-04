@@ -370,6 +370,19 @@ function createServer() {
                         if (node.type === "paragraph" && node.content) {
                           return node.content.map(extractTextFromNode).join("");
                         }
+                        // Handle bullet lists
+                        if (node.type === "bulletList" && node.content) {
+                          return node.content.map((item) => extractTextFromNode(item)).join("\n");
+                        }
+                        // Handle ordered lists
+                        if (node.type === "orderedList" && node.content) {
+                          return node.content.map((item) => extractTextFromNode(item)).join("\n");
+                        }
+                        // Handle list items - prefix with bullet or number
+                        if (node.type === "listItem" && node.content) {
+                          const itemText = node.content.map(extractTextFromNode).join("");
+                          return `• ${itemText}`;
+                        }
                         if (node.content && Array.isArray(node.content)) {
                           return node.content.map(extractTextFromNode).join("");
                         }
@@ -379,8 +392,7 @@ function createServer() {
                       const extractCommentText = (body) => {
                         if (!body || !body.content) return "";
                         return body.content
-                          .filter((node) => node.type === "paragraph")
-                          .map((paragraph) => extractTextFromNode(paragraph))
+                          .map((node) => extractTextFromNode(node))
                           .join("\n")
                           .trim();
                       };
