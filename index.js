@@ -391,27 +391,8 @@ function createServer() {
 
                       const extractCommentText = (body) => {
                         if (!body || !body.content) return "";
-
-                        // Debug: Log the body structure for the first comment
-                        if (issue.key && body.content.length > 0) {
-                          console.error(
-                            `[DEBUG ${issue.key}] Comment body structure:`,
-                            JSON.stringify(
-                              body.content.map((n) => ({ type: n.type, hasContent: !!n.content })),
-                              null,
-                              2
-                            )
-                          );
-                        }
-
                         return body.content
-                          .map((node) => {
-                            const result = extractTextFromNode(node);
-                            if (node.type === "bulletList" || node.type === "orderedList") {
-                              console.error(`[DEBUG ${issue.key}] Extracted from ${node.type}:`, result);
-                            }
-                            return result;
-                          })
+                          .map((node) => extractTextFromNode(node))
                           .join("\n")
                           .trim();
                       };
