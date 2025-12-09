@@ -34,7 +34,18 @@ function extractTextFromNode(node) {
   if (!node) return "";
 
   if (node.type === "text") {
-    return node.text || "";
+    let text = node.text || "";
+    // Check for hyperlink marks
+    if (node.marks && Array.isArray(node.marks)) {
+      const linkMark = node.marks.find((mark) => mark.type === "link");
+      if (linkMark && linkMark.attrs && linkMark.attrs.href) {
+        // Include hyperlink URL in the text
+        const url = linkMark.attrs.href;
+        // Format as "text [URL]" if text exists, otherwise just show URL
+        return text ? `${text} [${url}]` : `[${url}]`;
+      }
+    }
+    return text;
   }
 
   if (node.type === "hardBreak") {
